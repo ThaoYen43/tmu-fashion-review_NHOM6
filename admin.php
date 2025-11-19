@@ -101,7 +101,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['toggle_comment'])) {
 }
 
 // Lấy danh sách brands
-$stmt = $db->query("SELECT * FROM brands ORDER BY created_at DESC");
+$stmt = $db->query("
+    SELECT 
+        b.*,
+        AVG(c.rating) AS average_rating,
+        COUNT(c.id) AS total_comments
+    FROM brands b
+    LEFT JOIN comments c ON c.brand_id = b.id
+    GROUP BY b.id
+    ORDER BY b.created_at DESC;
+");
 $brands = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Lấy brand cần edit
@@ -118,7 +127,7 @@ $stats = [];
 $stats['total_brands'] = $db->query("SELECT COUNT(*) FROM brands")->fetchColumn();
 $stats['total_users'] = $db->query("SELECT COUNT(*) FROM users WHERE role = 'user'")->fetchColumn();
 $stats['total_comments'] = $db->query("SELECT COUNT(*) FROM comments")->fetchColumn();
-$stats['total_ratings'] = $db->query("SELECT COUNT(*) FROM ratings")->fetchColumn();
+// $stats['total_ratings'] = $db->query("SELECT COUNT(*) FROM ratings")->fetchColumn();
 
 // Lấy bình luận cần quản lý
 $stmt = $db->query("
@@ -344,7 +353,7 @@ $defaultLabels = ['S','M','L','XL'];
                 <div class="card stat-card">
                     <div class="card-body text-center">
                         <i class="fas fa-star fa-2x mb-2"></i>
-                        <h3><?= $stats['total_ratings'] ?></h3>
+                        <h3><?= $stats['total_comments'] ?></h3>
                         <p class="mb-0">Đánh giá</p>
                     </div>
                 </div>
@@ -513,7 +522,7 @@ $defaultLabels = ['S','M','L','XL'];
                                                     }
                                                     ?>
                                                 </div>
-                                                <small class="text-muted"><?= $brand['total_ratings'] ?> đánh giá</small>
+                                                <small class="text-muted"><?= $brand['total_comments'] ?> đánh giá</small>
                                             </td>
                                             <td>
                                                 <?php if ($brand['is_featured']): ?>

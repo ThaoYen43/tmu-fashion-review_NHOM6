@@ -11,7 +11,20 @@ if (!$brandId) {
 }
 
 // Lấy thông tin brand
-$stmt = $db->prepare("SELECT * FROM brands WHERE id = ?");
+$stmt = $db->prepare("
+SELECT 
+    b.*,
+    AVG(c.rating) AS average_rating,
+    COUNT(c.id) AS total_comments,
+    COUNT(CASE WHEN c.rating = 1 THEN 1 END) AS total_1_star_comments,
+    COUNT(CASE WHEN c.rating = 2 THEN 2 END) AS total_2_star_comments,
+    COUNT(CASE WHEN c.rating = 3 THEN 3 END) AS total_3_star_comments,
+    COUNT(CASE WHEN c.rating = 4 THEN 4 END) AS total_4_star_comments,
+    COUNT(CASE WHEN c.rating = 5 THEN 5 END) AS total_5_star_comments
+FROM brands b
+LEFT JOIN comments c ON c.brand_id = b.id
+WHERE b.id = ? 
+");
 $stmt->execute([$brandId]);
 $brand = $stmt->fetch(PDO::FETCH_ASSOC);
 
@@ -67,43 +80,46 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_comment_id']) 
 // Lấy đánh giá user hiện tại
 $userRating = 0;
 if (isLoggedIn()) {
-    $stmt = $db->prepare("SELECT rating FROM ratings WHERE user_id = ? AND brand_id = ?");
+    $stmt = $db->prepare("SELECT AVG(rating) FROM comments WHERE user_id = ? AND brand_id = ?");
     $stmt->execute([getCurrentUserId(), $brandId]);
     $userRating = $stmt->fetchColumn();
     $userRating = ($userRating !== false && $userRating !== null) ? (int)$userRating : 0;
 }
 
 // Lấy danh sách comment
-$stmt = $db->prepare("
-  SELECT c.id, c.user_id, c.brand_id, c.product_id, c.parent_id, c.content, c.image, c.created_at, 
-         u.username, u.avatar,
-         (SELECT rating FROM ratings r WHERE r.user_id = c.user_id AND r.brand_id = c.brand_id LIMIT 1) as user_rating
-    FROM comments c 
-    JOIN users u ON c.user_id = u.id 
-    WHERE c.brand_id = ? 
-      AND c.parent_id IS NULL 
-      AND c.is_hidden = 0
-    ORDER BY c.created_at DESC, c.id DESC
-");
-$stmt->execute([$brandId]);
-$comments = $stmt->fetchAll(PDO::FETCH_ASSOC);
+// $stmt = $db->prepare("
+//   SELECT c.id, c.user_id, c.brand_id, c.product_id, c.parent_id, c.content, c.image, c.created_at, 
+//          u.username, u.avatar,
+//          (SELECT rating FROM ratings r WHERE r.user_id = c.user_id AND r.brand_id = c.brand_id LIMIT 1) as user_rating
+//     FROM comments c 
+//     JOIN users u ON c.user_id = u.id 
+//     WHERE c.brand_id = ? 
+//       AND c.parent_id IS NULL 
+//       AND c.is_hidden = 0
+//     ORDER BY c.created_at DESC, c.id DESC
+// ");
+// $stmt->execute([$brandId]);
+// $comments = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Lấy các replies
-foreach ($comments as &$comment) {
-    $stmt = $db->prepare("SELECT c.id, c.user_id, c.brand_id, c.product_id, c.parent_id, c.content, c.image, c.created_at, u.username, u.avatar FROM comments c JOIN users u ON c.user_id = u.id WHERE c.parent_id = ? AND c.is_hidden = 0 ORDER BY c.created_at ASC");
-    $stmt->execute([$comment['id']]);
-    $comment['replies'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
-}
-unset($comment); // <-- quan trọng: giải phóng tham chiếu để tránh lỗi hiển thị lặp nội dung
+// // Lấy các replies
+// foreach ($comments as &$comment) {
+//     $stmt = $db->prepare("SELECT c.id, c.user_id, c.brand_id, c.product_id, c.parent_id, c.content, c.image, c.created_at, u.username, u.avatar FROM comments c JOIN users u ON c.user_id = u.id WHERE c.parent_id = ? AND c.is_hidden = 0 ORDER BY c.created_at ASC");
+//     $stmt->execute([$comment['id']]);
+//     $comment['replies'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
+// }
+// unset($comment); // <-- quan trọng: giải phóng tham chiếu để tránh lỗi hiển thị lặp nội dung
 
 // --- Lấy danh sách products của brand (không lấy comment ở cấp brand) ---
 $stmt = $db->prepare("
-  SELECT p.*,
-    (SELECT IFNULL(AVG(rating),0) FROM product_ratings pr WHERE pr.product_id = p.id) AS average_rating,
-    (SELECT COUNT(*) FROM product_ratings pr WHERE pr.product_id = p.id) AS total_ratings
-  FROM products p
-  WHERE p.brand_id = ?
-  ORDER BY p.created_at DESC
+  SELECT 
+    p.*,
+    IFNULL(AVG(c.rating), 0) AS average_rating,
+    COUNT(c.id) AS total_ratings
+FROM products p
+LEFT JOIN comments c ON c.product_id = p.id
+WHERE p.brand_id = ?
+GROUP BY p.id
+ORDER BY p.created_at DESC;
 ");
 $stmt->execute([$brandId]);
 $products = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -111,50 +127,50 @@ $products = $stmt->fetchAll(PDO::FETCH_ASSOC);
 // --- Bỏ việc tải comments/replies cho từng product để không hiển thị bình luận trên brand.php ---
 
 // --- Tính phân bố đánh giá: dùng tổng sao của từng tài khoản (sum per user) ---
-$ratingDistribution = array_fill(1, 5, 0);
-$brand_total_stars = 0;
-$brand_total_ratings = 0; // số tài khoản đã đánh
-$brand_avg_rating = 0;
+// $ratingDistribution = array_fill(1, 5, 0);
+// $brand_total_stars = 0;
+// $brand_total_ratings = 0; // số tài khoản đã đánh
+// $brand_avg_rating = 0;
 
 // kiểm tra bảng tồn tại
-$tableCheck = $db->prepare("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?");
-$tableCheck->execute(['products']);
-$hasProducts = $tableCheck->fetchColumn() > 0;
-$tableCheck->execute(['product_ratings']);
-$hasProductRatings = $tableCheck->fetchColumn() > 0;
+// $tableCheck = $db->prepare("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?");
+// $tableCheck->execute(['products']);
+// $hasProducts = $tableCheck->fetchColumn() > 0;
+// $tableCheck->execute(['product_ratings']);
+// $hasProductRatings = $tableCheck->fetchColumn() > 0;
 
-if ($hasProducts && $hasProductRatings) {
-    // Lấy tổng sao theo từng user (tổng rating user cho tất cả product thuộc brand)
-    $stmt = $db->prepare("
-        SELECT pr.user_id, SUM(pr.rating) AS user_total_stars, COUNT(*) AS user_rating_count
-        FROM product_ratings pr
-        JOIN products p ON pr.product_id = p.id
-        WHERE p.brand_id = ?
-        GROUP BY pr.user_id
-    ");
-    $stmt->execute([$brandId]);
-    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+// if ($hasProducts && $hasProductRatings) {
+//     // Lấy tổng sao theo từng user (tổng rating user cho tất cả product thuộc brand)
+//     $stmt = $db->prepare("
+//         SELECT pr.user_id, SUM(pr.rating) AS user_total_stars, COUNT(*) AS user_rating_count
+//         FROM product_ratings pr
+//         JOIN products p ON pr.product_id = p.id
+//         WHERE p.brand_id = ?
+//         GROUP BY pr.user_id
+//     ");
+//     $stmt->execute([$brandId]);
+//     $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    foreach ($rows as $r) {
-        $user_total = (int)$r['user_total_stars'];      // tổng số sao user đã cho (có thể >5)
-        $brand_total_stars += $user_total;              // cộng vào tổng sao của brand
-        $brand_total_ratings++;                         // 1 user = 1 đóng góp cho tổng số tài khoản đánh
+//     foreach ($rows as $r) {
+//         $user_total = (int)$r['user_total_stars'];      // tổng số sao user đã cho (có thể >5)
+//         $brand_total_stars += $user_total;              // cộng vào tổng sao của brand
+//         $brand_total_ratings++;                         // 1 user = 1 đóng góp cho tổng số tài khoản đánh
 
-        // Nếu vẫn muốn hiển thị phân bố 1..5, bạn có thể map user_total vào bucket 1..5 (ví dụ cap tối đa 5)
-        $bucket = max(1, min(5, $user_total)); // cap vào 1..5
-        $ratingDistribution[$bucket]++;
-    }
+//         // Nếu vẫn muốn hiển thị phân bố 1..5, bạn có thể map user_total vào bucket 1..5 (ví dụ cap tối đa 5)
+//         $bucket = max(1, min(5, $user_total)); // cap vào 1..5
+//         $ratingDistribution[$bucket]++;
+//     }
 
-    if ($brand_total_ratings > 0) {
-        // trung bình = tổng sao / số tài khoản đã đánh
-        $brand_avg_rating = $brand_total_stars / $brand_total_ratings;
-    }
-}
+//     if ($brand_total_ratings > 0) {
+//         // trung bình = tổng sao / số tài khoản đã đánh
+//         $brand_avg_rating = $brand_total_stars / $brand_total_ratings;
+//     }
+// }
 
 // Gán lại để phần hiển thị dùng biến cũ vẫn hoạt động
-$brand['average_rating'] = $brand_avg_rating;
-$brand['total_ratings'] = $brand_total_ratings;
-$brand['total_stars'] = $brand_total_stars;
+// $brand['average_rating'] = $brand_avg_rating;
+// $brand['total_ratings'] = $brand_total_ratings;
+// $brand['total_stars'] = $brand_total_stars;
 ?>
 
 <!DOCTYPE html>
@@ -541,7 +557,7 @@ $brand['total_stars'] = $brand_total_stars;
                 }
                 ?>
                 <span class="ms-3 fs-5"><?= number_format($brand['average_rating'], 1) ?>/5</span>
-                <span class="ms-2 opacity-75">(<?= $brand['total_ratings'] ?> đánh giá)</span>
+                <span class="ms-2 opacity-75">(<?= $brand['total_comments'] ?> đánh giá)</span>
             </div>
             
             <p class="lead mb-4 fade-in"><?= htmlspecialchars($brand['description']) ?></p>
@@ -625,10 +641,10 @@ $brand['total_stars'] = $brand_total_stars;
                         <div class="rating-distribution">
                             <h6 class="mb-3"><i class="fas fa-chart-bar me-2"></i>Phân bố đánh giá</h6>
                             <?php 
-                            $totalRatings = array_sum($ratingDistribution);
                             for ($i = 5; $i >= 1; $i--): 
-                                $count = $ratingDistribution[$i];
-                                $percentage = $totalRatings > 0 ? ($count / $totalRatings) * 100 : 0;
+                                $key = 'total_' . $i . '_star_comments';
+                                $count = $brand[$key] ?? 0;
+                                $percentage = $brand['total_comments'] > 0 ? ($count / $brand['total_comments']) * 100 : 0;
                             ?>
                                 <div class="d-flex align-items-center mb-2">
                                     <span class="me-2"><?= $i ?>⭐</span>
@@ -729,14 +745,20 @@ $brand['total_stars'] = $brand_total_stars;
                 <?php
                 // Lấy các brand liên quan (cùng khoảng giá hoặc rating cao)
                 $stmt = $db->prepare("
-                    SELECT * FROM brands 
-                    WHERE id != ? AND (
-                        (price_range_min BETWEEN ? AND ?) OR 
-                        (price_range_max BETWEEN ? AND ?) OR
+                    SELECT 
+                        b.*,
+                        AVG(c.rating) AS average_rating,
+                        COUNT(c.id) AS total_comments
+                    FROM brands b
+                    LEFT JOIN comments c ON c.brand_id = b.id
+                    WHERE b.id != ? AND (
+                        (b.price_range_min BETWEEN ? AND ?) OR 
+                        (b.price_range_max BETWEEN ? AND ?) OR
                         average_rating >= 4
                     )
-                    ORDER BY average_rating DESC, total_ratings DESC 
-                    LIMIT 4
+                    GROUP By b.id
+                    ORDER BY average_rating DESC, total_comments DESC
+                    LIMIT 4 
                 ");
                 $stmt->execute([
                     $brandId, 
@@ -771,7 +793,7 @@ $brand['total_stars'] = $brand_total_stars;
                                         echo $i <= $relatedRating ? '<i class="fas fa-star"></i>' : '<i class="far fa-star"></i>';
                                     }
                                     ?>
-                                    <small class="text-muted ms-1">(<?= $relatedBrand['total_ratings'] ?>)</small>
+                                    <small class="text-muted ms-1">(<?= $relatedBrand['total_comments'] ?>)</small>
                                 </div>
                                 
                                 <p class="text-primary fw-bold mb-3" style="font-size: 0.9rem;">

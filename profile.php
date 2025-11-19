@@ -113,11 +113,12 @@ $user = $stmt->fetch(PDO::FETCH_ASSOC);
 
 // Lấy các brand đã đánh giá
 $stmt = $db->prepare("
-    SELECT b.*, r.rating, r.created_at as rating_date 
-    FROM ratings r 
-    JOIN brands b ON r.brand_id = b.id 
-    WHERE r.user_id = ? 
-    ORDER BY r.created_at DESC
+    SELECT b.*, p.name as product_name, p.image as product_image, c.rating, c.created_at as rating_date
+    FROM comments c 
+    JOIN brands b ON c.brand_id = b.id 
+    LEFT JOIN products p on p.id = c.product_id
+    WHERE c.user_id = ?
+    ORDER BY c.created_at DESC
 ");
 $stmt->execute([$userId]);
 $ratedBrands = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -239,7 +240,7 @@ $userComments = $stmt->fetchAll(PDO::FETCH_ASSOC);
                         <h6 class="card-title">Thống kê</h6>
                         <div class="d-flex justify-content-between mb-2">
                             <span>Đã đánh giá:</span>
-                            <span class="badge bg-primary"><?= count($ratedBrands) ?></span>
+                            <span class="badge bg-primary"><?= count($userComments) ?></span>
                         </div>
                         <div class="d-flex justify-content-between mb-2">
                             <span>Bình luận:</span>
@@ -292,6 +293,7 @@ $userComments = $stmt->fetchAll(PDO::FETCH_ASSOC);
                                                                 <?= htmlspecialchars($brand['name']) ?>
                                                             </a>
                                                         </h6>
+                                                        <small class="text-muted"><?php echo $brand['product_name'] ?></small>
                                                         <div class="rating-stars">
                                                             <?php
                                                             for ($i = 1; $i <= 5; $i++) {

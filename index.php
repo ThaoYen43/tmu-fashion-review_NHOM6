@@ -71,7 +71,7 @@ if (!empty($_GET['search'])) {
 
 // Lấy brands theo filter - HIỂN THỊ TẤT CẢ BRANDS
 $filterCondition = '
-SELECT 
+    SELECT 
         b.*,
         AVG(c.rating) AS average_rating,
         COUNT(c.id) AS total_comments
@@ -502,7 +502,6 @@ if (isset($_SESSION['success_message'])) {
                 try {
                     $stats['brands'] = $db->query("SELECT COUNT(*) FROM brands")->fetchColumn();
                     $stats['reviews'] = $db->query("SELECT COUNT(*) FROM comments")->fetchColumn();
-                    $stats['ratings'] = $db->query("SELECT COUNT(*) FROM ratings")->fetchColumn();
                     $stats['users'] = $db->query("SELECT COUNT(*) FROM users WHERE role = 'user'")->fetchColumn();
                 } catch (Exception $e) {
                     $stats = ['brands' => 0, 'reviews' => 0, 'ratings' => 0, 'users' => 0];
@@ -517,7 +516,7 @@ if (isset($_SESSION['success_message'])) {
                     <p class="text-muted">Bình luận</p>
                 </div>
                 <div class="col-md-3 mb-3">
-                    <div class="h2 text-warning"><?= number_format($stats['ratings']) ?></div>
+                    <div class="h2 text-warning"><?= number_format($stats['reviews']) ?></div>
                     <p class="text-muted">Đánh giá</p>
                 </div>
                 <div class="col-md-3 mb-3">
