@@ -83,8 +83,7 @@ $ratingStats = $stmt->fetch(PDO::FETCH_ASSOC);
 
 // Lấy comments gốc của product
 $stmt = $db->prepare("
-    SELECT c.*, u.username, u.avatar,
-           (SELECT rating FROM product_ratings pr WHERE pr.user_id = c.user_id AND pr.product_id = c.product_id LIMIT 1) AS user_rating
+    SELECT c.*, u.username, u.avatar
     FROM comments c
     JOIN users u ON c.user_id = u.id
     WHERE c.product_id = ? AND (c.parent_id IS NULL OR c.parent_id = 0) AND c.is_hidden = 0
