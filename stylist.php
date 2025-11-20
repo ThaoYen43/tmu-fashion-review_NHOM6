@@ -136,6 +136,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 
     try {
         $matchedSizes = [];
+        $goodFitSizes = [];
+        $sizeSuggestions = '';
+        $nearestSize = null;
+        
         // nếu chọn product và có product_sizes hoặc sizes data đã nạp server-side -> kiểm tra
         if ($productId) {
             // tìm product trong $products
@@ -145,17 +149,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             if ($found) {
                 $sizes = $found['sizes'] ?? [];
                 if (!empty($sizes)) {
-                    foreach ($sizes as $s) {
-                        $bmin = (int)($s['bust_min'] ?? $s['bust_min'] ?? 0);
-                        $bmax = (int)($s['bust_max'] ?? $s['bust_max'] ?? 9999);
-                        $wmin = (int)($s['waist_min'] ?? $s['waist_min'] ?? 0);
-                        $wmax = (int)($s['waist_max'] ?? $s['waist_max'] ?? 9999);
-                        $hmin = (int)($s['hip_min'] ?? $s['hip_min'] ?? 0);
-                        $hmax = (int)($s['hip_max'] ?? $s['hip_max'] ?? 9999);
-
-                        if ($bust >= $bmin && $bust <= $bmax && $waist >= $wmin && $waist <= $wmax && $hip >= $hmin && $hip <= $hmax) {
-                            $matchedSizes[] = $s['size_label'] ?? ($s['size'] ?? 'Unknown');
-                        }
+                    // Sử dụng improved matching logic
+                    require_once 'improved_size_matching.php';
+                    $matchResult = find_matching_sizes_improved($sizes, $bust, $waist, $hip, 3);
+                    
+                    // Perfect matches (≥80 điểm)
+                    $matchedSizes = array_map(function($r) { return $r['label']; }, $matchResult['matched']);
+                    
+                    // Good fit matches (≥60 điểm)
+                    $goodFitSizes = array_map(function($r) { return $r['label']; }, $matchResult['good_fit']);
+                    
+                    // Nearest size
+                    if (!empty($matchResult['nearest'])) {
+                        $nearestSize = $matchResult['nearest']['label'];
+                    }
+                    
+                    // Suggestions
+                    $sizeSuggestions = $matchResult['suggestions'];
+                    
+                    // Fallback: nếu không có perfect match, dùng good fit
+                    if (empty($matchedSizes) && !empty($goodFitSizes)) {
+                        $matchedSizes = $goodFitSizes;
                     }
                 } else {
                     // nếu không có bảng sizes, thử lấy trường size_bust/size_waist/size_hip tồn tại (single sample)
@@ -206,6 +220,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             'message' => $message,
             'product_id' => $productId,
             'matched_sizes' => $matchedSizes,
+            'good_fit_sizes' => $goodFitSizes ?? [],
+            'nearest_size' => $nearestSize ?? null,
+            'size_suggestions' => $sizeSuggestions ?? '',
             'fits' => count($matchedSizes) > 0
         ]);
         exit;
@@ -435,13 +452,28 @@ document.getElementById('measureForm').addEventListener('submit', async function
     const data = await resp.json();
     if (data.success) {
       let fitMsg = '';
-      if (data.fits && data.matched_sizes && data.matched_sizes.length) {
-        fitMsg = `<div class="mb-1">Sản phẩm có size phù hợp: <strong>${data.matched_sizes.join(', ')}</strong></div>`;
-      } else if (data.product_id) {
-        fitMsg = `<div class="mb-1 text-warning">Sản phẩm này không có size phù hợp với số đo của bạn.</div>`;
+      
+      // Hiển thị kết quả size matching với logic mới
+      if (data.product_id) {
+        if (data.matched_sizes && data.matched_sizes.length) {
+          fitMsg = `<div class="mb-2"><span style="font-size:1.2em">✓</span> <strong>Size phù hợp hoàn hảo:</strong> <span class="badge bg-success" style="font-size:1em">${data.matched_sizes.join('</span> <span class="badge bg-success" style="font-size:1em">')}</span></div>`;
+        } else if (data.good_fit_sizes && data.good_fit_sizes.length) {
+          fitMsg = `<div class="mb-2"><span style="font-size:1.2em">✓</span> <strong>Size khá phù hợp:</strong> <span class="badge bg-info" style="font-size:1em">${data.good_fit_sizes.join('</span> <span class="badge bg-info" style="font-size:1em">')}</span></div>`;
+        } else if (data.nearest_size) {
+          fitMsg = `<div class="mb-2 text-warning"><span style="font-size:1.2em">⚠</span> <strong>Size gần nhất:</strong> ${data.nearest_size} (có thể không vừa hoàn toàn)</div>`;
+        } else {
+          fitMsg = `<div class="mb-2 text-danger"><span style="font-size:1.2em">✗</span> Sản phẩm này không có size phù hợp với số đo của bạn.</div>`;
+        }
+        
+        // Thêm gợi ý chi tiết nếu có
+        if (data.size_suggestions) {
+          fitMsg += `<div class="small text-muted mt-1"><em>${data.size_suggestions}</em></div>`;
+        }
       }
+      
       resEl.innerHTML = `<div class="alert ${data.confidence >= 0.6 ? 'alert-success' : (data.confidence >= 0.4 ? 'alert-warning' : 'alert-info')}">
         ${fitMsg}
+        <hr class="my-2">
         <strong>${data.message}</strong>
         <div class="mt-2"><strong>${data.body_code} — ${data.body_name}</strong><div class="small text-muted mt-1">${data.body_desc}</div></div>
       </div>`;
