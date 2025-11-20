@@ -143,11 +143,15 @@ $recentComments = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // --- product management backend (thêm) ---
 $editProduct = null;
+$productId = null;
 if (isset($_GET['edit_product'])) {
     $pid = (int)$_GET['edit_product'];
     $pst = $db->prepare("SELECT * FROM products WHERE id = ?");
     $pst->execute([$pid]);
     $editProduct = $pst->fetch(PDO::FETCH_ASSOC);
+    if ($editProduct) {
+        $productId = $editProduct['id'];
+    }
 }
 
 // Xử lý tạo/cập nhật product
@@ -182,11 +186,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_product'])) {
                 $params[] = $p_id;
                 $u = $db->prepare("UPDATE products SET $fields WHERE id = ?");
                 $u->execute($params);
+                
+                // Xử lý sizes
+                if (isset($_POST['sizes']) && is_array($_POST['sizes'])) {
+                    require_once 'includes/product_sizes.php';
+                    save_product_sizes($db, $p_id, $_POST['sizes']);
+                }
+                
                 $_SESSION['success'] = 'Cập nhật sản phẩm thành công!';
             } else {
                 // insert
                 $ins = $db->prepare("INSERT INTO products (brand_id, name, image, short_description, description, price, created_at) VALUES (?, ?, ?, ?, ?, ?, NOW())");
                 $ins->execute([$p_brand, $p_name, $pImage, $p_short, $p_desc, $p_price]);
+                $newProductId = $db->lastInsertId();
+                
+                // Xử lý sizes cho product mới
+                if (isset($_POST['sizes']) && is_array($_POST['sizes'])) {
+                    require_once 'includes/product_sizes.php';
+                    save_product_sizes($db, $newProductId, $_POST['sizes']);
+                }
+                
                 $_SESSION['success'] = 'Tạo sản phẩm thành công!';
             }
             redirectTo('admin.php?tab=products');
@@ -516,7 +535,7 @@ $defaultLabels = ['S','M','L','XL'];
                                             <td>
                                                 <div class="text-warning">
                                                     <?php
-                                                    $rating = round($brand['average_rating']);
+                                                    $rating = round($brand['average_rating'] || 0);
                                                     for ($i = 1; $i <= 5; $i++) {
                                                         echo $i <= $rating ? '<i class="fas fa-star"></i>' : '<i class="far fa-star"></i>';
                                                     }
@@ -673,42 +692,124 @@ $defaultLabels = ['S','M','L','XL'];
                                 </div>
                             </div>
 
-                            <!-- CHỖ CHÈN: Quản lý size -->
+                            <!-- Quản lý size -->
                             <div class="card mt-3 p-3">
-                              <h6>Quản lý size (S → XL)</h6>
-                              <div id="sizesWrap">
-                                <?php if (!empty($productSizes)): ?>
-                                  <?php foreach ($productSizes as $i => $s): ?>
-                                  <div class="size-row d-flex gap-2 mb-2 align-items-center">
-                                    <input name="sizes[<?= $i?>][size_label]" class="form-control form-control-sm" value="<?= htmlspecialchars($s['size_label']) ?>" readonly style="max-width:80px"/>
-                                    <input name="sizes[<?= $i?>][bust_min]" class="form-control form-control-sm" placeholder="Ngực min" type="number" value="<?= (int)$s['bust_min'] ?>" style="width:110px"/>
-                                    <input name="sizes[<?= $i?>][bust_max]" class="form-control form-control-sm" placeholder="Ngực max" type="number" value="<?= (int)$s['bust_max'] ?>" style="width:110px"/>
-                                    <input name="sizes[<?= $i?>][waist_min]" class="form-control form-control-sm" placeholder="Eo min" type="number" value="<?= (int)$s['waist_min'] ?>" style="width:110px"/>
-                                    <input name="sizes[<?= $i?>][waist_max]" class="form-control form-control-sm" placeholder="Eo max" type="number" value="<?= (int)$s['waist_max'] ?>" style="width:110px"/>
-                                    <input name="sizes[<?= $i?>][hip_min]" class="form-control form-control-sm" placeholder="Mông min" type="number" value="<?= (int)$s['hip_min'] ?>" style="width:110px"/>
-                                    <input name="sizes[<?= $i?>][hip_max]" class="form-control form-control-sm" placeholder="Mông max" type="number" value="<?= (int)$s['hip_max'] ?>" style="width:110px"/>
-                                    <button type="button" class="btn btn-sm btn-danger remove-size">X</button>
-                                  </div>
-                                  <?php endforeach; ?>
+                              <h6>Quản lý size</h6>
+                              <p class="small text-muted mb-3">
+                                <?php if ($editProduct): ?>
+                                  Chỉnh sửa thông tin size cho sản phẩm. Click "×" để xóa, click "+ Size" để thêm mới.
                                 <?php else: ?>
-                                  <?php foreach ($defaultLabels as $idx => $lab): ?>
-                                  <div class="size-row d-flex gap-2 mb-2 align-items-center">
-                                    <input name="sizes[<?= $idx?>][size_label]" class="form-control form-control-sm" value="<?= $lab ?>" readonly style="max-width:80px"/>
-                                    <input name="sizes[<?= $idx?>][bust_min]" class="form-control form-control-sm" placeholder="Ngực min" type="number" value="" style="width:110px"/>
-                                    <input name="sizes[<?= $idx?>][bust_max]" class="form-control form-control-sm" placeholder="Ngực max" type="number" value="" style="width:110px"/>
-                                    <input name="sizes[<?= $idx?>][waist_min]" class="form-control form-control-sm" placeholder="Eo min" type="number" value="" style="width:110px"/>
-                                    <input name="sizes[<?= $idx?>][waist_max]" class="form-control form-control-sm" placeholder="Eo max" type="number" value="" style="width:110px"/>
-                                    <input name="sizes[<?= $idx?>][hip_min]" class="form-control form-control-sm" placeholder="Mông min" type="number" value="" style="width:110px"/>
-                                    <input name="sizes[<?= $idx?>][hip_max]" class="form-control form-control-sm" placeholder="Mông max" type="number" value="" style="width:110px"/>
-                                    <button type="button" class="btn btn-sm btn-danger remove-size">X</button>
+                                  Thêm thông tin size cho sản phẩm mới. Click "+ Size" bên dưới để thêm size cần thiết.
+                                <?php endif; ?>
+                              </p>
+                              
+                              <div id="sizesWrap">
+                                <?php
+                                // Tạo map sizes hiện có
+                                $existingSizes = [];
+                                foreach ($productSizes as $s) {
+                                    $existingSizes[$s['size_label']] = $s;
+                                }
+                                
+                                // Hiển thị message nếu chưa có sizes
+                                if (empty($productSizes)):
+                                ?>
+                                  <div id="noSizesMsg" class="alert alert-info py-2 small">
+                                    <i class="fas fa-info-circle"></i> Chưa có size nào. Click các button bên dưới để thêm size.
                                   </div>
-                                  <?php endforeach; ?>
+                                <?php endif; ?>
+                                
+                                <?php
+                                // Hiển thị tất cả sizes có trong DB
+                                $idx = 0;
+                                foreach ($productSizes as $s):
+                                ?>
+                                  <div class="size-row d-flex gap-2 mb-2 align-items-center" data-size="<?= htmlspecialchars($s['size_label']) ?>">
+                                    <input name="sizes[<?= $idx?>][size_label]" class="form-control form-control-sm" value="<?= htmlspecialchars($s['size_label']) ?>" readonly style="max-width:80px"/>
+                                    <input name="sizes[<?= $idx?>][bust_min]" class="form-control form-control-sm" placeholder="Ngực min" type="number" value="<?= (int)$s['bust_min'] ?>" style="width:110px"/>
+                                    <input name="sizes[<?= $idx?>][bust_max]" class="form-control form-control-sm" placeholder="Ngực max" type="number" value="<?= (int)$s['bust_max'] ?>" style="width:110px"/>
+                                    <input name="sizes[<?= $idx?>][waist_min]" class="form-control form-control-sm" placeholder="Eo min" type="number" value="<?= (int)$s['waist_min'] ?>" style="width:110px"/>
+                                    <input name="sizes[<?= $idx?>][waist_max]" class="form-control form-control-sm" placeholder="Eo max" type="number" value="<?= (int)$s['waist_max'] ?>" style="width:110px"/>
+                                    <input name="sizes[<?= $idx?>][hip_min]" class="form-control form-control-sm" placeholder="Mông min" type="number" value="<?= (int)$s['hip_min'] ?>" style="width:110px"/>
+                                    <input name="sizes[<?= $idx?>][hip_max]" class="form-control form-control-sm" placeholder="Mông max" type="number" value="<?= (int)$s['hip_max'] ?>" style="width:110px"/>
+                                    <button type="button" class="btn btn-sm btn-danger remove-size" onclick="removeSize(this)">×</button>
+                                  </div>
+                                <?php 
+                                $idx++;
+                                endforeach; 
+                                ?>
+                              </div>
+                              
+                              <div class="mt-3">
+                                <label class="form-label small">Thêm size:</label>
+                                <div class="d-flex gap-2 flex-wrap">
+                                  <?php
+                                  $allSizes = ['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL', 'Free'];
+                                  foreach ($allSizes as $sizeLabel):
+                                      if (!isset($existingSizes[$sizeLabel])):
+                                  ?>
+                                    <button type="button" class="btn btn-sm btn-outline-primary add-size-btn" data-size="<?= $sizeLabel ?>" onclick="addSize('<?= $sizeLabel ?>')">
+                                      + <?= $sizeLabel ?>
+                                    </button>
+                                  <?php 
+                                      endif;
+                                  endforeach; 
+                                  ?>
+                                </div>
+                                <?php if (count($existingSizes) >= count($allSizes)): ?>
+                                  <p class="small text-success mt-2 mb-0">✓ Đã có đủ tất cả sizes</p>
                                 <?php endif; ?>
                               </div>
-                              <div class="mt-2">
-                                <button type="button" id="addSizeBtn" class="btn btn-sm btn-outline-primary">Thêm size</button>
-                              </div>
                             </div>
+                            
+                            <script>
+                            let sizeIndex = <?= $idx ?>;
+                            
+                            function addSize(sizeLabel) {
+                                const wrap = document.getElementById('sizesWrap');
+                                
+                                // Ẩn message "Chưa có size nào" nếu có
+                                const noSizesMsg = document.getElementById('noSizesMsg');
+                                if (noSizesMsg) noSizesMsg.style.display = 'none';
+                                
+                                const row = document.createElement('div');
+                                row.className = 'size-row d-flex gap-2 mb-2 align-items-center';
+                                row.setAttribute('data-size', sizeLabel);
+                                row.innerHTML = `
+                                    <input name="sizes[${sizeIndex}][size_label]" class="form-control form-control-sm" value="${sizeLabel}" readonly style="max-width:80px"/>
+                                    <input name="sizes[${sizeIndex}][bust_min]" class="form-control form-control-sm" placeholder="Ngực min" type="number" value="" style="width:110px"/>
+                                    <input name="sizes[${sizeIndex}][bust_max]" class="form-control form-control-sm" placeholder="Ngực max" type="number" value="" style="width:110px"/>
+                                    <input name="sizes[${sizeIndex}][waist_min]" class="form-control form-control-sm" placeholder="Eo min" type="number" value="" style="width:110px"/>
+                                    <input name="sizes[${sizeIndex}][waist_max]" class="form-control form-control-sm" placeholder="Eo max" type="number" value="" style="width:110px"/>
+                                    <input name="sizes[${sizeIndex}][hip_min]" class="form-control form-control-sm" placeholder="Mông min" type="number" value="" style="width:110px"/>
+                                    <input name="sizes[${sizeIndex}][hip_max]" class="form-control form-control-sm" placeholder="Mông max" type="number" value="" style="width:110px"/>
+                                    <button type="button" class="btn btn-sm btn-danger remove-size" onclick="removeSize(this)">×</button>
+                                `;
+                                wrap.appendChild(row);
+                                sizeIndex++;
+                                
+                                // Ẩn button vừa click
+                                const btn = document.querySelector(`.add-size-btn[data-size="${sizeLabel}"]`);
+                                if (btn) btn.style.display = 'none';
+                            }
+                            
+                            function removeSize(btn) {
+                                const row = btn.closest('.size-row');
+                                const sizeLabel = row.getAttribute('data-size');
+                                row.remove();
+                                
+                                // Hiện lại button thêm size
+                                const addBtn = document.querySelector(`.add-size-btn[data-size="${sizeLabel}"]`);
+                                if (addBtn) addBtn.style.display = '';
+                                
+                                // Hiện lại message nếu không còn size nào
+                                const sizeRows = document.querySelectorAll('.size-row');
+                                const noSizesMsg = document.getElementById('noSizesMsg');
+                                if (sizeRows.length === 0 && noSizesMsg) {
+                                    noSizesMsg.style.display = '';
+                                }
+                            }
+                            </script>
                             <!-- KẾT THÚC: Quản lý size -->
 
                             <div class="d-flex gap-2">
