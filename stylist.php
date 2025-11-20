@@ -125,6 +125,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     $hip    = (int)($_POST['hip'] ?? 0);
     $preset = $_POST['preset'] ?? '';
     $productId = isset($_POST['product_id']) ? (int)$_POST['product_id'] : null;
+    
+    // Debug: Check if products array has sizes
+    error_log("DEBUG POST: products count = " . count($products));
+    error_log("DEBUG POST: productId = " . $productId);
+    if ($productId) {
+        $foundDebug = null;
+        foreach ($products as $p) {
+            if ((int)$p['id'] === $productId) {
+                $foundDebug = $p;
+                break;
+            }
+        }
+        if ($foundDebug) {
+            error_log("DEBUG POST: Found product, sizes count = " . count($foundDebug['sizes'] ?? []));
+            error_log("DEBUG POST: Sizes data = " . json_encode($foundDebug['sizes'] ?? []));
+        } else {
+            error_log("DEBUG POST: Product not found in products array");
+        }
+    }
 
     if (!$height || !$bust || !$waist || !$hip) {
         ob_end_clean();
@@ -148,10 +167,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 
             if ($found) {
                 $sizes = $found['sizes'] ?? [];
+                
+                // Debug: log sizes data
+                error_log("DEBUG: Product ID {$productId} has " . count($sizes) . " sizes");
+                error_log("DEBUG: Sizes data: " . json_encode($sizes));
+                
                 if (!empty($sizes)) {
                     // Sử dụng improved matching logic
                     require_once 'improved_size_matching.php';
                     $matchResult = find_matching_sizes_improved($sizes, $bust, $waist, $hip, 3);
+                    
+                    // Debug: log match result
+                    error_log("DEBUG: Match result: " . json_encode([
+                        'matched' => array_map(fn($r) => $r['label'], $matchResult['matched']),
+                        'good_fit' => array_map(fn($r) => $r['label'], $matchResult['good_fit']),
+                        'suggestions' => $matchResult['suggestions']
+                    ]));
                     
                     // Perfect matches (≥80 điểm)
                     $matchedSizes = array_map(function($r) { return $r['label']; }, $matchResult['matched']);
@@ -172,21 +203,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                         $matchedSizes = $goodFitSizes;
                     }
                 } else {
-                    // nếu không có bảng sizes, thử lấy trường size_bust/size_waist/size_hip tồn tại (single sample)
-                    $q = $db->prepare("SELECT size_bust_min AS bust_min, size_bust_max AS bust_max, size_waist_min AS waist_min, size_waist_max AS waist_max, size_hip_min AS hip_min, size_hip_max AS hip_max FROM products WHERE id = ? LIMIT 1");
-                    $q->execute([$productId]);
-                    $row = $q->fetch(PDO::FETCH_ASSOC);
-                    if ($row && ($row['bust_min'] || $row['bust_max'] || $row['waist_min'] || $row['waist_max'] || $row['hip_min'] || $row['hip_max'])) {
-                        $bmin = (int)($row['bust_min'] ?: 0);
-                        $bmax = (int)($row['bust_max'] ?: 9999);
-                        $wmin = (int)($row['waist_min'] ?: 0);
-                        $wmax = (int)($row['waist_max'] ?: 9999);
-                        $hmin = (int)($row['hip_min'] ?: 0);
-                        $hmax = (int)($row['hip_max'] ?: 9999);
-                        if ($bust >= $bmin && $bust <= $bmax && $waist >= $wmin && $waist <= $wmax && $hip >= $hmin && $hip <= $hmax) {
-                            $matchedSizes[] = 'One-size';
-                        }
-                    }
+                    // Sản phẩm không có dữ liệu size trong bảng product_sizes
+                    error_log("DEBUG: Product ID {$productId} has no sizes data");
+                    $sizeSuggestions = "Sản phẩm này chưa có thông tin size chi tiết. Vui lòng liên hệ shop để được tư vấn.";
+                    
+                    // Không cần fallback vì bảng products không có cột size_*
+                    // Chỉ trả về message thân thiện
                 }
             }
         }
@@ -228,8 +250,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         exit;
     } catch (Exception $e) {
         error_log('stylist error: '.$e->getMessage());
+        error_log('stylist error trace: '.$e->getTraceAsString());
         ob_end_clean();
-        echo json_encode(['success'=>false,'message'=>'Lỗi server']);
+        
+        // Trả về error message chi tiết hơn trong development
+        $errorMsg = 'Đã xảy ra lỗi khi xử lý. Vui lòng thử lại.';
+        if (ini_get('display_errors')) {
+            $errorMsg .= ' (Debug: ' . $e->getMessage() . ')';
+        }
+        
+        echo json_encode([
+            'success'=>false,
+            'message'=>$errorMsg,
+            'debug' => ini_get('display_errors') ? [
+                'error' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ] : null
+        ]);
         exit;
     }
 }
@@ -448,7 +486,11 @@ document.getElementById('measureForm').addEventListener('submit', async function
   const resEl = document.getElementById('result');
   resEl.style.display = 'none';
   try {
-    const resp = await fetch('stylist.php', { method: 'POST', body: form });
+    // Giữ brand_id trong URL khi gửi AJAX
+    const currentUrl = new URL(window.location.href);
+    const brandId = currentUrl.searchParams.get('brand_id');
+    const fetchUrl = brandId ? `stylist.php?brand_id=${brandId}` : 'stylist.php';
+    const resp = await fetch(fetchUrl, { method: 'POST', body: form });
     const data = await resp.json();
     if (data.success) {
       let fitMsg = '';
@@ -461,13 +503,23 @@ document.getElementById('measureForm').addEventListener('submit', async function
           fitMsg = `<div class="mb-2"><span style="font-size:1.2em">✓</span> <strong>Size khá phù hợp:</strong> <span class="badge bg-info" style="font-size:1em">${data.good_fit_sizes.join('</span> <span class="badge bg-info" style="font-size:1em">')}</span></div>`;
         } else if (data.nearest_size) {
           fitMsg = `<div class="mb-2 text-warning"><span style="font-size:1.2em">⚠</span> <strong>Size gần nhất:</strong> ${data.nearest_size} (có thể không vừa hoàn toàn)</div>`;
+        } else if (data.size_suggestions && data.size_suggestions.includes('chưa có thông tin')) {
+          // Sản phẩm không có dữ liệu size
+          fitMsg = `<div class="mb-2" style="background:#fff3cd; padding:12px; border-radius:6px; border-left:4px solid #ffc107">
+            <span style="font-size:1.2em">ℹ️</span> <strong>Thông tin size chưa có sẵn</strong>
+            <div class="small mt-1">Sản phẩm này chưa có dữ liệu size chi tiết trong hệ thống.</div>
+          </div>`;
         } else {
-          fitMsg = `<div class="mb-2 text-danger"><span style="font-size:1.2em">✗</span> Sản phẩm này không có size phù hợp với số đo của bạn.</div>`;
+          // Có dữ liệu size nhưng không match
+          fitMsg = `<div class="mb-2" style="background:#f8d7da; padding:12px; border-radius:6px; border-left:4px solid #dc3545">
+            <span style="font-size:1.2em">⚠</span> <strong>Không tìm thấy size phù hợp</strong>
+            <div class="small mt-1">Số đo của bạn không khớp với các size có sẵn của sản phẩm này.</div>
+          </div>`;
         }
         
         // Thêm gợi ý chi tiết nếu có
         if (data.size_suggestions) {
-          fitMsg += `<div class="small text-muted mt-1"><em>${data.size_suggestions}</em></div>`;
+          fitMsg += `<div class="small mt-2" style="padding:10px; background:#f8f9fa; border-radius:4px"><em>💡 ${data.size_suggestions}</em></div>`;
         }
       }
       
